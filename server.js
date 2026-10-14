@@ -1,63 +1,120 @@
 #!/usr/bin/env node
-// CodexBD - single-file full-stack app (Claude API backend + sci-fi frontend). Developer: Khokon Talukder
-// Run:  ANTHROPIC_API_KEY=sk-ant-xxxx node server.js      (Node 18+, no npm install needed)
-// Optional env: PORT=3000  MODEL=claude-sonnet-5-5  ACCESS_CODE=secret (asks visitors for a code)
-const http=require('http'),fs=require('fs');
-const PORT=process.env.PORT||3000,KEY=process.env.ANTHROPIC_API_KEY,MODEL=process.env.MODEL||'claude-sonnet-5-5',CODE=process.env.ACCESS_CODE||'';
-if(!KEY){console.error('Missing ANTHROPIC_API_KEY. Example: ANTHROPIC_API_KEY=sk-ant-xxxx node server.js');process.exit(1)}
-const SYSTEM="You are CodexBD, an AI assistant created by developer Khokon Talukder. Style: warm, natural, human-like conversation, short and clear. Always reply in the language the user writes or speaks (Bengali, Arabic, English, anything). Culture: respect Islamic values and etiquette. Answer a greeting with \"Assalamu Alaikum\" style warmth and use phrases like InshaAllah, Alhamdulillah or Jazakallah naturally, but sparingly. For religious rulings, share general knowledge and advise asking a qualified scholar. Never encourage haram or illegal acts. Never claim to be human if sincerely asked, and never claim abilities you lack (you cannot place real phone calls or make photorealistic images). Replies may be read aloud, so avoid markdown symbols and emojis outside code blocks.\nFILES: when asked for a file, put its full content in ONE fenced block whose first line is: lang filename=name.ext (prefer txt, md, csv, json, html, svg). CODE: always use fenced blocks with the language. IMAGE CREATION: when asked to draw or create an image, reply with one short sentence and a complete standalone SVG in a fenced block starting with \"svg filename=art.svg\" (viewBox set, no scripts, no external links).\nIMAGE ANALYSIS: if an image is attached, look at it and answer the request. Do not identify real people by face.";
-const src=fs.readFileSync(__filename,'utf8'),A='/*HTML'+'_START\n',B='\nHTML_'+'END*/';
-const HTML=src.slice(src.indexOf(A)+A.length,src.lastIndexOf(B));
-const hits=new Map();
-function limited(ip){const n=Date.now(),a=(hits.get(ip)||[]).filter(t=>n-t<60000);a.push(n);hits.set(ip,a);return a.length>20}
-const json=(res,c,o)=>{res.writeHead(c,{'Content-Type':'application/json'});res.end(JSON.stringify(o))};
+// CodexBD - single-file full-stack app (Gemini API backend + sci-fi frontend). Developer: Khokon Talukder
+// Run:  GEMINI_API_KEY=your_key node server.js
+// Optional env: PORT=3000  MODEL=gemini-2.5-flash  ACCESS_CODE=secret
 
-async function chat(req,res){
-  if(CODE&&req.headers['x-access-code']!==CODE)return json(res,401,{error:'Access code required'});
-  const ip=(req.headers['x-forwarded-for']||'').split(',')[0].trim()||req.socket.remoteAddress;
-  if(limited(ip))return json(res,429,{error:'Too many requests. Please wait a minute.'});
-  let raw='';for await(const c of req){raw+=c;if(raw.length>8e6)return json(res,413,{error:'Request too large'})}
-  let b;try{b=JSON.parse(raw)}catch{return json(res,400,{error:'Bad request'})}
-  const msgs=(Array.isArray(b.messages)?b.messages:[]).slice(-20)
-    .filter(m=>m&&(m.role==='user'||m.role==='assistant')&&typeof m.content==='string'&&m.content)
-    .map(m=>({role:m.role,content:m.content.slice(0,50000)}));
-  while(msgs.length&&msgs[0].role!=='user')msgs.shift();
-  if(!msgs.length||msgs[msgs.length-1].role!=='user')return json(res,400,{error:'No message'});
-  if(b.image&&/^image\/(jpeg|png|webp|gif)$/.test(b.image.media_type)&&typeof b.image.data==='string'){
-    const l=msgs[msgs.length-1];
-    l.content=[{type:'image',source:{type:'base64',media_type:b.image.media_type,data:b.image.data}},{type:'text',text:l.content}];
+const http = require('http');
+const fs = require('fs');
+const { GoogleGenAI } = require('@google/genai');
+
+const PORT = process.env.PORT || 3000;
+const KEY = process.env.GEMINI_API_KEY;
+const MODEL = process.env.MODEL || 'gemini-2.5-flash';
+const CODE = process.env.ACCESS_CODE || '';
+
+if (!KEY) {
+  console.error('Missing GEMINI_API_KEY. Example: GEMINI_API_KEY=your_key node server.js');
+  process.exit(1);
+}
+
+const ai = new GoogleGenAI({ apiKey: KEY });
+
+const SYSTEM = "You are CodexBD, an AI assistant created by developer Khokon Talukder. Style: warm, natural, human-like conversation, short and clear. Always reply in the language the user writes or speaks (Bengali, Arabic, English, anything). Culture: respect Islamic values and etiquette. Answer a greeting with \"Assalamu Alaikum\" style warmth and use phrases like InshaAllah, Alhamdulillah or Jazakallah naturally, but sparingly. For religious rulings, share general knowledge and advise asking a qualified scholar. Never encourage haram or illegal acts. Never claim to be human if sincerely asked, and never claim abilities you lack (you cannot place real phone calls or make photorealistic images). Replies may be read aloud, so avoid markdown symbols and emojis outside code blocks.\nFILES: when asked for a file, put its full content in ONE fenced block whose first line is: lang filename=name.ext (prefer txt, md, csv, json, html, svg). CODE: always use fenced blocks with the language. IMAGE CREATION: when asked to draw or create an image, reply with one short sentence and a complete standalone SVG in a fenced block starting with \"svg filename=art.svg\" (viewBox set, no scripts, no external links).\nIMAGE ANALYSIS: if an image is attached, look at it and answer the request. Do not identify real people by face.";
+
+const src = fs.readFileSync(__filename, 'utf8');
+const A = '/*HTML' + '_START\n';
+const B = '\nHTML_' + 'END*/';
+const HTML = src.slice(src.indexOf(A) + A.length, src.lastIndexOf(B));
+
+const hits = new Map();
+function limited(ip) {
+  const n = Date.now();
+  const a = (hits.get(ip) || []).filter(t => n - t < 60000);
+  a.push(n);
+  hits.set(ip, a);
+  return a.length > 20;
+}
+
+const json = (res, c, o) => {
+  res.writeHead(c, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(o));
+};
+
+async function chat(req, res) {
+  if (CODE && req.headers['x-access-code'] !== CODE) return json(res, 401, { error: 'Access code required' });
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+  if (limited(ip)) return json(res, 429, { error: 'Too many requests. Please wait a minute.' });
+  
+  let raw = '';
+  for await (const c of req) {
+    raw += c;
+    if (raw.length > 8e6) return json(res, 413, { error: 'Request too large' });
   }
-  let up;
-  try{up=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
-    headers:{'content-type':'application/json','x-api-key':KEY,'anthropic-version':'2023-06-01'},
-    body:JSON.stringify({model:MODEL,max_tokens:4096,system:SYSTEM,messages:msgs,stream:true})})}
-  catch{return json(res,502,{error:'Cannot reach the Claude API'})}
-  if(!up.ok){console.error('Claude API',up.status,await up.text());
-    return json(res,up.status===429?429:502,{error:up.status===401?'Server API key is invalid':'Claude API error ('+up.status+')'})}
-  res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-cache','X-Accel-Buffering':'no'});
-  const dec=new TextDecoder();let buf='';
-  try{
-    for await(const ch of up.body){
-      buf+=dec.decode(ch,{stream:true});let i;
-      while((i=buf.indexOf('\n'))>=0){
-        const line=buf.slice(0,i).trim();buf=buf.slice(i+1);
-        if(!line.startsWith('data:'))continue;
-        try{const ev=JSON.parse(line.slice(5));
-          if(ev.type==='content_block_delta'&&ev.delta&&ev.delta.type==='text_delta')res.write(ev.delta.text);
-          else if(ev.type==='error')res.write('\n[Error from Claude API]');
-        }catch{}
+  
+  let b;
+  try { b = JSON.parse(raw); } catch { return json(res, 400, { error: 'Bad request' }); }
+  
+  const msgs = (Array.isArray(b.messages) ? b.messages : []).slice(-20)
+    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content);
+
+  if (!msgs.length || msgs[msgs.length - 1].role !== 'user') return json(res, 400, { error: 'No message' });
+
+  // Convert chat history to Gemini format
+  const contents = msgs.map(m => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content.slice(0, 50000) }]
+  }));
+
+  // Attach image if present to the last message
+  if (b.image && /^image\/(jpeg|png|webp|gif)$/.test(b.image.media_type) && typeof b.image.data === 'string') {
+    const lastMsg = contents[contents.length - 1];
+    lastMsg.parts.push({
+      inlineData: {
+        mimeType: b.image.media_type,
+        data: b.image.data
+      }
+    });
+  }
+
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+
+  try {
+    const responseStream = await ai.models.generateContentStream({
+      model: MODEL,
+      contents: contents,
+      config: {
+        systemInstruction: SYSTEM
+      }
+    });
+
+    for await (const chunk of responseStream) {
+      if (chunk.text) {
+        res.write(chunk.text);
       }
     }
-  }catch{res.write('\n[Connection interrupted]')}
+  } catch (err) {
+    console.error('Gemini API Error:', err);
+    res.write('\n[Error from Gemini API]');
+  }
   res.end();
 }
 
-http.createServer((req,res)=>{
-  const p=req.url.split('?')[0];
-  if(req.method==='GET'&&p==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Permissions-Policy':'microphone=(self), camera=(self)'});return res.end(HTML)}
-  if(req.method==='POST'&&p==='/api/chat')return chat(req,res).catch(e=>{console.error(e);if(!res.headersSent)json(res,500,{error:'Server error'});else res.end()});
-  res.writeHead(404);res.end('Not found');
-}).listen(PORT,()=>console.log('CodexBD running at http://localhost:'+PORT));
+http.createServer((req, res) => {
+  const p = req.url.split('?')[0];
+  if (req.method === 'GET' && p === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'X-Content-Type-Options': 'nosniff', 'Permissions-Policy': 'microphone=(self), camera=(self)' });
+    return res.end(HTML);
+  }
+  if (req.method === 'POST' && p === '/api/chat') {
+    return chat(req, res).catch(e => {
+      console.error(e);
+      if (!res.headersSent) json(res, 500, { error: 'Server error' });
+      else res.end();
+    });
+  }
+  res.writeHead(404);
+  res.end('Not found');
+}).listen(PORT, () => console.log('CodexBD running at http://localhost:' + PORT));
 
 /*HTML_START
 <!DOCTYPE html>
@@ -286,7 +343,8 @@ inp.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDef
 $('callb').onclick=()=>{inCall=true;$('call').classList.add('show');$('cph').textContent='';listen()};
 function endCall(){inCall=false;$('call').classList.remove('show');if(synth)synth.cancel();try{rec&&rec.stop()}catch(e){}setState('','SYSTEM ONLINE')}
 $('endb').onclick=endCall;
-$('aboutb').onclick=()=>$('about').classList.add('show');$('aboutx').onclick=()=>$('about').classList.remove('show');
+$('aboutb').onclick=()=>$('about').classList.show?$('about').classList.remove('show'):$('about').classList.add('show');
+$('aboutx').onclick=()=>$('about').classList.remove('show');
 </script>
 </body>
 </html>
